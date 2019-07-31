@@ -5,8 +5,7 @@
 //  Created by Adhiraj Singh on 7/20/18.
 //  Copyright © 2018 Adhiraj Singh. All rights reserved.
 //
-//  Pure Swift TCP Socket based on ytcpsocket.c & BlueSocket
-//  Uses C Non blocking sockets but made blocking using swift
+
 #if os(Linux)
 import Glibc
 #else
@@ -16,7 +15,7 @@ import Darwin
 import Foundation
 
 
-public class CSocket {
+open class CSocket {
     
     public enum Error: Swift.Error {
         case failedToObtainIPAddress
