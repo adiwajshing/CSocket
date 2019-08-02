@@ -15,50 +15,64 @@ import Foundation
 extension CSocket {
     
     public func sendSync (data: inout Data) throws {
-        try syncOperation(asyncTask: {
-            self.sendAsync(data: &data)
-        }, sm: self.sendSM, error: &self.sendErr, syncSwitch: &sendSyncCall)
+        beginSend(data: &data, sync: true)
+        
+        defer {
+            sendSM.signal()
+        }
+        
+        if let err = sendErr {
+            throw err
+        }
     }
+    
     public func sendAsync (data: inout Data) {
-        var bytes = [UInt8](data)
-        sendAsync(bytes: &bytes)
-    }
-    public func sendAsync (bytes: inout [UInt8]) {
         
-        let b = bytes
-        
+        var d = data
         self.queue.async {
-            
-            self.sendTmpData = b
-            self.sendTmpBytesSent = 0
-            self.sendStartDate = Date()
-            
-            self.sendUpdate()
+            self.beginSend(data: &d, sync: false)
         }
 
     }
-    private func sendUpdate () {
+    private func beginSend (data: inout Data, sync: Bool) {
+        sendSM.wait()
+        
+        self.sendTmpData = data
+        self.sendTmpBytesSent = 0
+        self.sendStartDate = Date()
+        
+        self.sendUpdate(sync: sync)
+    }
+    private func sendUpdate (sync: Bool) {
         
         guard let socketfd = fd.get() else {
-            self.sendEnded(error: CSocket.Error.socketNotOpenError())
+            self.sendEnded(sync: sync, error: CSocket.Error.socketNotOpenError())
             return
         }
         
         if sendTimeout > 0.0 && Date().timeIntervalSince(sendStartDate) > sendTimeout {
-            self.sendEnded(error: CSocket.Error.timedOutError())
+            self.sendEnded(sync: sync, error: CSocket.Error.timedOutError())
             return
         }
-        
-        #if os(Linux)
-        let writelen = Glibc.send(socketfd, &sendTmpData+sendTmpBytesSent, sendTmpData.count-sendTmpBytesSent, Int32(MSG_NOSIGNAL))
-        #else
-        let writelen = Darwin.send(socketfd, &sendTmpData+sendTmpBytesSent, sendTmpData.count-sendTmpBytesSent, MSG_SEND)
-        #endif
-        
+
+        var writelen = 0
+        sendTmpData.withUnsafeBytes { (p) -> Void in
+            
+            let addr = p.baseAddress!.advanced(by: sendTmpBytesSent)
+            let bytesToSend = sendTmpData.count-sendTmpBytesSent
+            
+            #if os(Linux)
+            writelen = Glibc.send(socketfd, addr, bytesToSend, Int32(MSG_NOSIGNAL))
+            #else
+            writelen = Darwin.send(socketfd, addr, bytesToSend, MSG_SEND)
+            #endif
+        }
+       // var p = UnsafeRawPointer(&data).advanced(by: sendTmpBytesSent)
+
         if writelen <= 0 && errno != EWOULDBLOCK {
             let err = CSocket.Error.currentError()
             self.close()
-            self.sendEnded(error: err)
+            self.sendEnded(sync: sync, error: err)
             return
         }
         
@@ -68,26 +82,35 @@ extension CSocket {
         
         //incorrect, figure something
         if writelen < sendTmpData.count {
+            
+            if sync {
+                usleep(useconds_t(CSocket.sendIntervalMS * 1000))
+                sendUpdate(sync: sync)
+            } else {
+                let deadline = DispatchTime.now() + .milliseconds(CSocket.sendIntervalMS)
+                self.queue.asyncAfter(deadline: deadline, execute: {
+                    self.sendUpdate(sync: sync)
+                })
+            }
 
-            let deadline = DispatchTime.now() + .milliseconds(CSocket.sendIntervalMS)
-            self.queue.asyncAfter(deadline: deadline, execute: sendUpdate)
+            
         } else {
-            sendEnded(error: nil)
+            sendEnded(sync: sync, error: nil)
         }
         
     }
     
-    func sendEnded (error: CSocket.Error?) {
+    func sendEnded (sync: Bool, error: CSocket.Error?) {
         
         ///print("send ended")
         
-        if sendSyncCall {
+        if sync {
             sendErr = error
             sendTmpData.removeAll()
+        } else {
             
             sendSM.signal()
-        } else if let delegate = delegate {
-            delegate.sendEnded(socket: self, error: error)
+            delegate?.sendEnded(socket: self, error: error)
         }
         
     }

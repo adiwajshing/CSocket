@@ -65,26 +65,24 @@ open class CSocket {
     let fd = AtomicValue<Int32?>(nil)
     
     
-    
     let queue = DispatchQueue(label: "socket", qos: .default, attributes: [], autoreleaseFrequency: .inherit, target: nil)
     
     var dispatchSource: DispatchSourceProtocol?
     
     let sendSM = DispatchSemaphore(value: 1)
     
-    var sendTmpData = [UInt8]()
+    var sendTmpData = Data()
     var sendTmpBytesSent = 0
     var sendStartDate = Date(timeIntervalSince1970: 0)
-    var sendSyncCall = false
     
     var sendErr: CSocket.Error?
     
+    
     let readSM = DispatchSemaphore(value: 1)
     
-    var tmpData = [UInt8]()
+    var tmpData = Data()
     var tmpBytesRead = 0
     var readStartDate = Date(timeIntervalSince1970: 0)
-    var readSyncCall = false
     
     var readErr: CSocket.Error?
     
@@ -105,25 +103,6 @@ open class CSocket {
     public init (port: Int32) {
         self.address = CSocket.defaultHost
         self.port = port
-    }
-    
-    func syncOperation (asyncTask: (() -> Void), sm: DispatchSemaphore, error: inout CSocket.Error?, syncSwitch: inout Bool) throws {
-        
-        sm.wait()
-        
-        syncSwitch = true
-        
-        asyncTask()
-        sm.wait()
-        
-        syncSwitch = false
-        
-        sm.signal()
-        
-        if let error = error {
-            throw error
-        }
-        
     }
     
     public func availableData () -> Int {

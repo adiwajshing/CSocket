@@ -116,16 +116,16 @@ class CommunicationTests: XCTestCase, SocketAsyncOperationsDelegate {
 
         }
         func readEnded(socket: CSocket, data: Data, error: CSocket.Error?) {
-            var bytes = [UInt8](data)
-            let num1: Int32 = fromByteArray(value: bytes[0..<MemoryLayout<Int32>.size])
-            let num2: Int32 = fromByteArray(value: bytes[4..<8])
+
+            let num1: Int32 = fromData(value: Data(data[0..<MemoryLayout<Int32>.size]))
+            let num2: Int32 = fromData(value: Data(data[4..<8]))
             
             let result = Int64(num1 * num2)
             
             print("\(socket.description) \(num1)*\(num2)=\(result)")
-            
-            bytes = toByteArray(value: result)
-            socket.sendAsync(bytes: &bytes)
+
+            var sdata = toData(value: result)
+            socket.sendAsync(data: &sdata)
         }
         
     }
@@ -142,11 +142,9 @@ class CommunicationTests: XCTestCase, SocketAsyncOperationsDelegate {
             try connectSync()
         }
         func multiplyNumbersSync (num1: Int32, num2: Int32) throws -> Int64 {
-            var bytes: [UInt8] = []
-            bytes.append(contentsOf: toByteArray(value: num1))
-            bytes.append(contentsOf: toByteArray(value: num2))
-            
-            var data = Data(bytes: &bytes, count: bytes.count)
+            var data = Data()
+            data.append(contentsOf: toData(value: num1))
+            data.append(contentsOf: toData(value: num2))
 
             try sendSync(data: &data)
             let rdata = try readSync(expectedLength: MemoryLayout<Int64>.size)
@@ -161,10 +159,10 @@ class CommunicationTests: XCTestCase, SocketAsyncOperationsDelegate {
         func multiplyNumbersAsync (num1: Int32, num2: Int32, callback: @escaping ((Client, Int64, CSocket.Error?) -> Void)) {
             
             self.asyncCallback = callback
-            var bytes = toByteArray(value: num1)
-            bytes.append(contentsOf: toByteArray(value: num2))
+            var bytes = toData(value: num1)
+            bytes.append(contentsOf: toData(value: num2))
             
-            sendAsync(bytes: &bytes)
+            sendAsync(data: &bytes)
         }
         func sendEnded(socket: CSocket, error: CSocket.Error?) {
             readAsync(expectedLength: MemoryLayout<Int64>.size)
@@ -187,11 +185,11 @@ class CommunicationTests: XCTestCase, SocketAsyncOperationsDelegate {
 
 }
 
-func toByteArray<T>(value: T) -> [UInt8] {
+func toData<T>(value: T) -> Data {
     var x = value
-    return withUnsafeBytes(of: &x) { Array($0) }
+    return withUnsafeBytes(of: &x) { Data($0) }
 }
-func fromByteArray<T>(value: ArraySlice<UInt8>) -> T {
+func fromData<T>(value: Data) -> T {
     
     return value.withUnsafeBytes {
         $0.baseAddress!.load(as: T.self)

@@ -56,53 +56,71 @@ extension CSocket {
     }
     
     public func readSync (expectedLength length: Int) throws -> Data {
-
-        try self.syncOperation(asyncTask: {
-            self.readAsync(expectedLength: length)
-        }, sm: self.readSM, error: &self.readErr, syncSwitch: &readSyncCall)
-
-        let data = Data(bytes: &tmpData, count: tmpData.count)
+        self.beginRead(length: length, sync: true)
+        
+        defer {
+            readSM.signal()
+        }
+        
+        if let err = readErr {
+            throw err
+        }
+        
+        let data = Data(tmpData)
+        tmpData.removeAll()
+        
         return data
     }
 
     public func readAsync (expectedLength length: Int) {
         
         self.queue.async {
-            
-            self.tmpData = [UInt8](repeating: 0, count: length)
-            
-            self.tmpBytesRead = 0
-            self.readStartDate = Date()
-            
-            self.dispatchSource?.suspend()
-            
-            self.readUpdate()
-            
+            self.beginRead(length: length, sync: false)
         }
 
     }
-    private func readUpdate () {
+    private func beginRead (length: Int, sync: Bool) {
+        
+        self.readSM.wait()
+        
+        self.tmpData = Data(count: length)
+        
+        self.tmpBytesRead = 0
+        self.readStartDate = Date()
+        
+        self.dispatchSource?.suspend()
+        
+        self.readUpdate(sync: sync)
+    }
+    private func readUpdate (sync: Bool) {
 
         guard let socketfd = fd.get() else {
-            self.readEnded(error: CSocket.Error.socketNotOpenError())
+            self.readEnded(sync: sync, error: CSocket.Error.socketNotOpenError())
             return
         }
         
         if readTimeout > 0.0 && Date().timeIntervalSince(readStartDate) > readTimeout {
-            self.readEnded(error: CSocket.Error.timedOutError())
+            self.readEnded(sync: sync, error: CSocket.Error.timedOutError())
             return
         }
         
-        #if os(Linux)
-        let r = Glibc.recv(socketfd, &tmpData+tmpBytesRead, tmpData.count-tmpBytesRead, 0)
-        #else
-        let r = Darwin.recv(socketfd, &tmpData+tmpBytesRead, tmpData.count-tmpBytesRead, 0)
-        #endif
+        let bytesToRead = tmpData.count-tmpBytesRead
+        var r = 0
+        tmpData.withUnsafeMutableBytes { (p) -> Void in
+            var addr = p.baseAddress!.advanced(by: tmpBytesRead)
+
+            #if os(Linux)
+            r = Glibc.recv(socketfd, addr, bytesToRead, 0)
+            #else
+            r = Darwin.recv(socketfd, addr, bytesToRead, 0)
+            #endif
+            
+        }
         
         if r <= 0 && errno != EWOULDBLOCK  {
             let err = CSocket.Error.currentError()
             self.close()
-            self.readEnded(error: err)
+            self.readEnded(sync: sync, error: err)
         } else {
 
             if r > 0 {
@@ -110,31 +128,39 @@ extension CSocket {
             }
             
             if tmpBytesRead < tmpData.count {
-                let deadline = DispatchTime.now() + .milliseconds(CSocket.readIntervalMS)
-                self.queue.asyncAfter(deadline: deadline, execute: self.readUpdate)
+                
+                if sync {
+                    usleep(useconds_t(CSocket.readIntervalMS * 1000))
+                    self.readUpdate(sync: sync)
+                } else {
+                    let deadline = DispatchTime.now() + .milliseconds(CSocket.readIntervalMS)
+                    self.queue.asyncAfter(deadline: deadline, execute: {
+                        self.readUpdate(sync: sync)
+                    })
+                }
+                
+                
             } else {
-                readEnded(error: nil)
+                readEnded(sync: sync, error: nil)
             }
             
         }
     }
     
-    func readEnded (error: CSocket.Error?) {
+    func readEnded (sync: Bool, error: CSocket.Error?) {
        // print("read ended")
         
         self.dispatchSource?.resume()
         
-        if let delegate = delegate, !readSyncCall {
-            let data = Data(bytes: &tmpData, count: tmpData.count)
+        if sync {
+            readErr = error
+        } else {
+            let data = Data(tmpData)
             tmpData.removeAll()
             
-            delegate.readEnded(socket: self, data: data, error: error)
-        } else if readSyncCall {
-            readErr = error
-            
             readSM.signal()
+            delegate?.readEnded(socket: self, data: data, error: error)
         }
-        
         
     }
     

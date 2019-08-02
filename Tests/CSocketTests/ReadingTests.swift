@@ -13,7 +13,7 @@ class ReadingTests: XCTestCase, SocketAsyncOperationsDelegate {
     var listener: CSocket!
     var client: CSocket!
     
-    var data = Data(count: 1024 * 20) //use 20KB of data to transfer
+    var data = Data(count: 128) //use 20KB of data to transfer
     var rdata = Data()
     
     var isDoingSyncReading = false
@@ -77,6 +77,8 @@ class ReadingTests: XCTestCase, SocketAsyncOperationsDelegate {
             rdata.append(d)
         }
         
+     //   print("\([UInt8](rdata))\n\([UInt8](data))")
+        
         XCTAssertEqual(rdata, self.data)
     }
     func testReadSyncConcurrent() throws {
@@ -86,17 +88,22 @@ class ReadingTests: XCTestCase, SocketAsyncOperationsDelegate {
         client.delegate = self
         try client.connectSync()
         
+        var iterationsDone = 0
         DispatchQueue.concurrentPerform(iterations: iterations) { (_) in
             do {
-                let d = try client.readSync(expectedLength: data.count/iterations)
+                let d = try self.client.readSync(expectedLength: self.data.count/self.iterations)
                 
                 self.queue.async {
                     self.rdata.append(d)
+                    iterationsDone += 1
                 }
             } catch {
                 XCTFail("reading error: \(error)")
             }
-            
+        }
+        
+        while iterationsDone < iterations {
+            usleep(100 * 1000)
         }
 
         XCTAssertEqual(rdata, self.data)
@@ -141,7 +148,6 @@ class ReadingTests: XCTestCase, SocketAsyncOperationsDelegate {
         XCTAssertFalse(isDoingSyncReading)
         XCTAssertNil(error, "connect error: \(error!)")
         
-        //client.readAsync(expectedLength: data.count)
         DispatchQueue.concurrentPerform(iterations: iterations) { (_) in
             let c = data.count/self.iterations
             client.readAsync(expectedLength: c)
