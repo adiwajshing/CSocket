@@ -8,7 +8,7 @@
 import XCTest
 @testable import CSocket
 
-class ConnectingTests: XCTestCase, SocketAsyncOperationsDelegate {
+class ConnectingTests: XCTestCase, CSocketAsyncOperationsDelegate {
 
     var hasConnected = false
 
@@ -62,5 +62,11 @@ class ConnectingTests: XCTestCase, SocketAsyncOperationsDelegate {
             print("got error: \(error)")
         }
     }
+    
+    static var allTests = [
+        ("testConnectSync", testConnectSync),
+        ("testConnectAsync", testConnectAsync),
+        ("testConnectFail", testConnectFail)
+    ]
 
 }

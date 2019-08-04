@@ -4,17 +4,17 @@
 //
 //  Created by Adhiraj Singh on 7/31/19.
 //
-// Send two numbers to the server, server will add them
+// Send two numbers to the server, server will add them; load test also
 
 import XCTest
 @testable import CSocket
 
-class CommunicationTests: XCTestCase, SocketAsyncOperationsDelegate {
+class CommunicationTests: XCTestCase, CSocketAsyncOperationsDelegate {
 
     var server: Server!
     var clients = [Client]()
     
-    let numberOfClients = 1000
+    let numberOfClients = 500
     
     override func setUp() {
         // Put setup code here. This method is called before the invocation of each test method in the class.
@@ -91,7 +91,7 @@ class CommunicationTests: XCTestCase, SocketAsyncOperationsDelegate {
         }
     }
     
-    class Server: CSocket, SocketAsyncOperationsDelegate {
+    class Server: CSocket, CSocketAsyncOperationsDelegate {
         
         
         override init(port: Int32) {
@@ -130,7 +130,7 @@ class CommunicationTests: XCTestCase, SocketAsyncOperationsDelegate {
         
     }
     
-    class Client: CSocket, SocketAsyncOperationsDelegate {
+    class Client: CSocket, CSocketAsyncOperationsDelegate {
         
         var numbersMultiplied = 0
         var asyncCallback: ((Client, Int64, CSocket.Error?) -> Void)?

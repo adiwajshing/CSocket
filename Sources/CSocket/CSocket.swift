@@ -14,20 +14,41 @@ import Darwin
 
 import Foundation
 
-
-open class CSocket {
+///Pure Swift TCP Socket
+open class CSocket: CustomStringConvertible {
     
+    /// Swift wrapper around C AF_INET6 & AF_INET
+    public enum INETProtocol {
+        case ipv6
+        case ipv4
+        
+        init (_ rawValue: Int32) {
+            switch rawValue {
+            case AF_INET6:
+                self = .ipv6
+            default:
+                self = .ipv4
+            }
+        }
+        
+        public var rawValue: Int32 {
+            return self == .ipv6 ? AF_INET6 : AF_INET
+        }
+    }
+    
+    /// Swifr wrapper around the C errno
     public enum Error: Swift.Error {
         case failedToObtainIPAddress
         case alreadyConnected
         case error (Int32, String)
         
-        static func currentError () -> Error {
-            return error(errno)
-        }
-        static func error (_ err: Int32) -> Error {
+        init (_ err: Int32) {
             let str = String(cString: strerror(err) )
-            return .error(err, str)
+            self = .error(err, str)
+        }
+        
+        static func current () -> Error {
+            return Error(errno)
         }
         static  func socketNotOpenError () -> Error {
             return .error(150, "Socket Not Open")
@@ -37,17 +58,26 @@ open class CSocket {
         }
     }
     
+    ///the dispatch queue which takes takes care of all async operations of all CSockets
+    public static var updateQueue = DispatchQueue(label: "c_socket_queue", qos: .default, attributes: [.concurrent], autoreleaseFrequency: .inherit, target: nil)
+    
+    ///the interval between checks for whether the socket has connected
     public static var connectCheckIntervalMS = 100
+    ///the interval between c send calls
     public static var sendIntervalMS = 20
+    ///the interval between each c recv calls
     public static var readIntervalMS = 50
     
+    ///the host at which a listener is started
     public static let defaultHost = "::/0"
     
-    static let inet_protocol: Int32 = AF_INET6
+    static let inetProtocol = INETProtocol.ipv6.rawValue
+    
     
     public let address: String
     public let port: Int32
     
+    ///returns whether the socket is connected; whether the socketfd is set or not
     public var isConnected: Bool {
         return fd.get() != nil
     }
@@ -56,19 +86,26 @@ open class CSocket {
         return "\(address):\(port) \( fd.get()?.description ?? "" )"
     }
     
+    ///max timeout for connecting (for both async & sync operations)
     public var connectTimeout = 5.0
+    ///max timeout for sending data (for both async & sync operations)
     public var sendTimeout = 5.0
+    ///max timeout for reading data (for both async & sync operations)
     public var readTimeout = 5.0
+    ///the minimum number of bytes required for the dataDidBecomeAvailable (socket:, bytes:) callback to be called
+    public var readBytesThreshhold = 0
     
-    public var delegate: SocketAsyncOperationsDelegate?
+    ///the delegate which is called for all async operations
+    public var delegate: CSocketAsyncOperationsDelegate?
     
+    ///the file descriptor for the socket; C uses these integers to reference connections
+    ///It is an AtomicValue to ensure thread safety
     let fd = AtomicValue<Int32?>(nil)
     
-    
-    let queue = DispatchQueue(label: "socket", qos: .default, attributes: [], autoreleaseFrequency: .inherit, target: nil)
-    
+    ///the source used for the accepting loop & read loop
     var dispatchSource: DispatchSourceProtocol?
     
+    ///DispatchSemaphore that ensures only one send operation happens at any given time
     let sendSM = DispatchSemaphore(value: 1)
     
     var sendTmpData = Data()
@@ -77,7 +114,7 @@ open class CSocket {
     
     var sendErr: CSocket.Error?
     
-    
+    ///DispatchSemaphore that ensures only one read operation happens at any given time
     let readSM = DispatchSemaphore(value: 1)
     
     var tmpData = Data()
@@ -86,25 +123,29 @@ open class CSocket {
     
     var readErr: CSocket.Error?
     
-    public init(address: String, port: Int32, inet_protocol: Int32) {
-        
-        self.address = inet_protocol == AF_INET ? "::ffff:\(address)" : address
+    ///Create a socket specifying an address, port & the address type (ipv4, ipv6). DO NOT USE FOR DOMAINS (eg. www.google.com), USE CSocket.init(host:, port:) FOR THOSE.
+    public init(address: String, port: Int32, addressType: CSocket.INETProtocol) {
+        self.address = addressType == .ipv4 ? "::ffff:\(address)" : address
         self.port = port
-        
     }
+    
+    ///Create a socket specifying a host & port. Parses domains automatically
     public init (host: String, port: Int32) throws {
         
-        var inet_protocol: Int32 = 0
-        let addr = try CSocket.getHostIP(host, prot: &inet_protocol)
+        var p: INETProtocol = .ipv6
+        let addr = try CSocket.getHostIP(host, prot: &p) //parse the domain
         
-        self.address = inet_protocol == AF_INET ? "::ffff:\(addr)" : addr
+        self.address = p == .ipv4 ? "::ffff:\(addr)" : addr //if the IP Address is IPV4, wrap it as an IPV6 address
         self.port = port
     }
+    
+    ///Creates a socket for listening, just specify a port to listen on
     public init (port: Int32) {
         self.address = CSocket.defaultHost
         self.port = port
     }
     
+    ///Returns the number of bytes available to be read
     public func availableData () -> Int {
         guard let socketfd = fd.get() else {
             return 0
@@ -115,48 +156,47 @@ open class CSocket {
         return Int(count)
     }
     
-    public static func getHostIP(_ host: String, prot: inout Int32) throws -> String {
+    ///Returns the IP Address of a domain along with its INETProtocol (ipv4 or ipv6)
+    public static func getHostIP(_ host: String, prot: inout CSocket.INETProtocol) throws -> String {
         
         var pointer: UnsafeMutablePointer<addrinfo>?
         
         let r = getaddrinfo(host, nil, nil, &pointer)
         
         if r < 0 {
-            throw CSocket.Error.currentError()
+            throw CSocket.Error.current()
         }
         
         var cli_addr = pointer!.pointee.ai_addr.pointee
         
-        prot = Int32(cli_addr.sa_family)
+        prot = INETProtocol(Int32(cli_addr.sa_family))
         
-        let str: String
-        if cli_addr.sa_family == AF_INET6 {
+        var ip: [Int8]
+        if prot == INETProtocol.ipv6 {
             
             var in_addr = sockaddr_in6.init()
             memcpy(&in_addr, &cli_addr, Int( MemoryLayout.size(ofValue: cli_addr) ))
             
-            var ip = [Int8](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+            ip = [Int8](repeating: 0, count: Int(INET6_ADDRSTRLEN))
             if inet_ntop(AF_INET6, &in_addr.sin6_addr, &ip, socklen_t(INET6_ADDRSTRLEN)) == nil {
                 throw CSocket.Error.failedToObtainIPAddress
             }
-            
-            str = String(cString: ip)
             
         } else {
             var in_addr = sockaddr_in.init()
             memcpy(&in_addr, &cli_addr, Int( MemoryLayout.size(ofValue: cli_addr) ))
             
-            var ip = [Int8](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            ip = [Int8](repeating: 0, count: Int(INET_ADDRSTRLEN))
             if inet_ntop(AF_INET, &in_addr.sin_addr, &ip, socklen_t(INET_ADDRSTRLEN)) == nil {
                 throw CSocket.Error.failedToObtainIPAddress
             }
-            
-            str = String(cString: ip)
+
         }
         
-        return str
+        return String(cString: ip)
     }
     
+    ///make the port BigEndian encoding (network encoding)
     static func porthtons(_ port: in_port_t) -> in_port_t {
         #if os(Linux)
         return htons(port)
@@ -166,6 +206,7 @@ open class CSocket {
         #endif
     }
     
+    ///make the socket non blocking
     static func makeNonBlocking (socket: Int32) {
         let flags = fcntl(socket, F_GETFL, 0)
         _ = fcntl(socket, F_SETFL, flags | O_NONBLOCK)
@@ -184,16 +225,17 @@ extension CSocket: Hashable {
     }
 }
 
-// C replacement Utils -------------------------------------
-
-
+// C replacement Utils (from BlueSocket) -------------------------------------
 
 #if os(Linux)
 //private let FIONREAD = Glibc.FIONREAD
 let sockStreamType = Int32(SOCK_STREAM.rawValue)
 #else
 let sockStreamType = SOCK_STREAM
-let FIONREAD : CUnsignedLong = CUnsignedLong( IOC_OUT ) | ((CUnsignedLong(4 /* Int32 */) & CUnsignedLong(IOCPARM_MASK)) << 16) | (102 /* 'f' */ << 8) | 127
+let FIONREAD : CUnsignedLong =
+    CUnsignedLong( IOC_OUT ) |
+    ((CUnsignedLong(4) & CUnsignedLong(IOCPARM_MASK)) << 16) |
+        (102 << 8) | 127
 #endif
 
 
@@ -215,7 +257,7 @@ extension fd_set {
     }
 }
 
-#else   // not Linux on ARM
+#else
 
 // __DARWIN_FD_SETSIZE is number of *bits*, so divide by number bits in each element to get element count
 // at present this is 1024 / 32 == 32

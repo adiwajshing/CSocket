@@ -3,7 +3,7 @@
 //  CSocket
 //
 //  Created by Adhiraj Singh on 7/28/19.
-//
+//  Code for connect & close functions
 
 #if os(Linux)
 import Glibc
@@ -14,119 +14,141 @@ import Foundation
 
 extension CSocket {
     
+    ///Connect to a listener synchronously
     public func connectSync () throws {
         beginConnect(sync: true)
         
         defer {
-            readSM.signal()
+            readSM.signal() // signal the semaphore before exiting the function
         }
         
         if let err = readErr {
             throw err
         }
     }
+    
+    ///Connect to a listener asynchronously; calls connectEnded(socket:, error:) of the delegate
     public func connectAsync () {
-        self.queue.async {
+        CSocket.updateQueue.async {
             self.beginConnect(sync: false)
         }
     }
+    
+    ///Begin connecting
     private func beginConnect (sync: Bool) {
         
-        readSM.wait()
+        readSM.wait() //wait in case multiple threads simultaneously try to connect
         
-        if let _ = self.fd.get() {
-            self.connectEnded(sync: sync, error: CSocket.Error.alreadyConnected)
+        /*
+         Using the Semaphore used for reading because reading will not be enabled till the socket is connected
+         */
+        
+        if let _ = self.fd.get() { // if already connected
+            self.connectEnded(sync: sync, error: CSocket.Error.alreadyConnected) //end with error
             return
         }
         
-        var sa_f = sockaddr.init()
+        // make a sockaddr_in6 to input our IPV6 address information
+        var addrIn = sockaddr_in6.init()
+        addrIn.sin6_family = sa_family_t(CSocket.inetProtocol) // set protocol to IPV6
+        inet_pton(AF_INET6, self.address, &addrIn.sin6_addr) // set address
+        addrIn.sin6_port = CSocket.porthtons(in_port_t(self.port)) // convert port to network encoding and set it
         
-        var sa = sockaddr_in6.init()
-        sa.sin6_family = sa_family_t(CSocket.inet_protocol)
+        let socketfd = socket(CSocket.inetProtocol, sockStreamType, 0) // allocate an IPV6 socket fd
+        CSocket.makeNonBlocking(socket: socketfd) // make it non-blocking
         
-        memset(&(sa.sin6_addr), 0, MemoryLayout.size(ofValue: sa.sin6_addr))
-        inet_pton(AF_INET6, self.address, &(sa.sin6_addr))
-        
-        sa.sin6_port = CSocket.porthtons(in_port_t(self.port))
-        
-        memcpy(&sa_f, &sa, MemoryLayout<sockaddr_in6>.size)
-        
-        let socketfd = socket(CSocket.inet_protocol, sockStreamType, 0)
-        CSocket.makeNonBlocking(socket: socketfd)
-        
-        let startDate = Date()
-        
-        let errorlen: socklen_t = UInt32(MemoryLayout<Int32>.size)
+        var sa = sockaddr.init()
+        memcpy(&sa, &addrIn, MemoryLayout<sockaddr_in6>.size) // copy address information
+        let saSize = socklen_t(MemoryLayout.size(ofValue: addrIn)) // get size of the sockaddr_in6 struct
         
         #if os(Linux)
-        let r = Glibc.connect(socketfd, &sa_f, socklen_t(MemoryLayout.size(ofValue: sa)))
+        let r = Glibc.connect(socketfd, &sa, saSize)
         #else
-        let r = Darwin.connect(socketfd, &sa_f, socklen_t(MemoryLayout.size(ofValue: sa)))
+        let r = Darwin.connect(socketfd, &sa, saSize) // connect
         
+        /*
+         A SIGPIPE error is thrown when the socket is closed and one tries to read/write to it.
+         We set it to SO_NOSIGPIPE to prevent that error from crashing the app.
+         Otherwise, unexpected socket closes will crash the app
+         */
         var set: Int32 = 0
-        setsockopt(socketfd, SOL_SOCKET, SO_NOSIGPIPE, &set, errorlen)
+        setsockopt(socketfd, SOL_SOCKET, SO_NOSIGPIPE, &set, socklen_t(MemoryLayout<Int32>.size))
         
         #endif
         
+        // set the socketfd to our fd property
         self.fd.set(socketfd)
         
-        self.connectUpdate(sync: sync, startDate: startDate, r: r, err: errno)
-        
+        readStartDate = Date()
+        //start the update loop
+        self.connectUpdate(sync: sync, r: r, err: errno)
     }
-    private func connectUpdate (sync: Bool, startDate: Date, r: Int32, err: Int32) {
+    
+    ///update loop that checks if the socket has connected
+    /// - Parameter sync: whether the update loop should be synchronous or not
+    /// - Parameter r: the result of the last connect check
+    /// - Parameter err: the error (if any) from the last connect check
+    private func connectUpdate (sync: Bool, r: Int32, err: Int32) {
         
-        if r >= 0 {
-            self.connectEnded(sync: sync, error: nil)
-        } else if err == EINPROGRESS || err == ENOTCONN {
+        if r >= 0 { // r >= 0, means the connection was successful
+            self.connectEnded(sync: sync, error: nil) // end the loop
+        } else if err == EINPROGRESS || err == ENOTCONN { // if the connecting is in progress
             
-            let timeSinceStart = Date().timeIntervalSince(startDate)
-            if connectTimeout > 0 && timeSinceStart > connectTimeout {
+            let timeSinceStart = Date().timeIntervalSince(readStartDate)
+            
+            if connectTimeout > 0 && timeSinceStart > connectTimeout { // if there was a timeout & the process has timed out
                 close()
-                self.connectEnded(sync: sync, error: CSocket.Error.timedOutError())
+                self.connectEnded(sync: sync, error: CSocket.Error.timedOutError()) // finish loop with timeout error
             } else {
-
-                guard let socketfd = fd.get() else {
-                    self.connectEnded(sync: sync, error: CSocket.Error.socketNotOpenError())
+                
+                guard let socketfd = fd.get() else { // check whether the fd is still set
+                    self.connectEnded(sync: sync, error: CSocket.Error.socketNotOpenError()) // finish with notOpenError
                     return
                 }
                 
-                var m = 0
                 
+                /*
+                 Attempt to send nothing as a way to check the connection
+                 */
+                
+                var tmp = 0
                 #if os(Linux)
-                let r2 = Int32(Glibc.send(socketfd, &m, 0, Int32(MSG_NOSIGNAL)))
+                let r2 = Int32(Glibc.send(socketfd, &tmp, 0, Int32(MSG_NOSIGNAL)))
+                // MSG_NOSIGNAL is the Linux way of saying don't call SIGPIPE
                 #else
-                let r2 = Int32(Darwin.send(socketfd, &m, 0, MSG_SEND))
+                let r2 = Int32(Darwin.send(socketfd, &tmp, 0, MSG_SEND))
                 #endif
                 
-                let err2 = errno
+                let err2 = errno // get the error from the send attempt
                 
                 if sync {
+                    // if sync, then sleep for a few MS and check connection again
                     usleep(useconds_t(CSocket.connectCheckIntervalMS * 1000))
-                    connectUpdate(sync: sync, startDate: startDate, r: r2, err: err2)
+                    connectUpdate(sync: sync, r: r2, err: err2)
                 } else {
+                    // if async, then schedule an async operation to check the connection again
                     let deadline = DispatchTime.now() + .milliseconds(CSocket.connectCheckIntervalMS)
-                    self.queue.asyncAfter(deadline: deadline) {
-                        self.connectUpdate(sync: sync, startDate: startDate, r: r2, err: err2)
+                    CSocket.updateQueue.asyncAfter(deadline: deadline) {
+                        self.connectUpdate(sync: sync, r: r2, err: err2)
                     }
                 }
-
+                
             }
             
             
-        } else {
-            let err = CSocket.Error.error(err)
+        } else { // otherwise, there was an error in connecting
+            let cErr = CSocket.Error(err) // wrap the error in a CSocket.Error
             
-            close()
-            connectEnded(sync: sync, error: err)
+            close() // close the socket
+            connectEnded(sync: sync, error: cErr) // finish the loop
         }
         
     }
     
-    func connectEnded (sync: Bool, error: CSocket.Error?) {
-        
-        //print("connect ended")
-        
+    private func connectEnded (sync: Bool, error: CSocket.Error?) {
+
         if sync {
+            //set the error for the sync function to access
             readErr = error
         } else {
             readSM.signal()
@@ -135,6 +157,7 @@ extension CSocket {
         
     }
     
+    ///close the socket connection
     public func close () {
         
         guard let socketfd = fd.get() else {
@@ -143,8 +166,6 @@ extension CSocket {
         
         
         self.dispatchSource?.cancel()
-        self.tmpData.removeAll()
-        self.sendTmpData.removeAll()
         
         #if os(Linux)
         Glibc.close(socketfd)
@@ -155,5 +176,6 @@ extension CSocket {
         self.fd.set(nil)
 
     }
+
     
 }

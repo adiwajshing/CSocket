@@ -8,12 +8,12 @@
 import XCTest
 @testable import CSocket
 
-class ReadingTests: XCTestCase, SocketAsyncOperationsDelegate {
+class ReadingTests: XCTestCase, CSocketAsyncOperationsDelegate {
     
     var listener: CSocket!
     var client: CSocket!
     
-    var data = Data(count: 128) //use 20KB of data to transfer
+    var data = Data(count: 1024 * 20) //use 20KB of data to transfer
     var rdata = Data()
     
     var isDoingSyncReading = false
@@ -159,13 +159,23 @@ class ReadingTests: XCTestCase, SocketAsyncOperationsDelegate {
         XCTAssertNil(error, "got error: \(error!)")
         
         isReading = false
-        rdata.append(data)
-
-        if rdata.count == self.data.count {
+        
+        self.queue.async {
+            self.rdata.append(data)
             
-            XCTAssertEqual(rdata, self.data)
-            isDone = true
+            if self.rdata.count == self.data.count {
+                
+                XCTAssertEqual(self.rdata, self.data)
+                self.isDone = true
+            }
         }
+        
     }
+    
+    static var allTests = [
+        ("testReadSync", testReadSync),
+        ("testReadAsync", testReadAsyncConcurrent),
+        ("testReadNotifications", testReadingNotifications)
+    ]
 
 }

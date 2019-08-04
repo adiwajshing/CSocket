@@ -1,12 +1,13 @@
 //
 //  AtomicValue.swift
-//  MySQL
+//  CSocket
 //
 //  Created by Adhiraj Singh on 7/28/19.
 //
 
 import Foundation
 
+///Thread Safe Object
 public class AtomicValue <T> {
     
     private var value: T
@@ -16,37 +17,27 @@ public class AtomicValue <T> {
         self.value = value
     }
     
-    public func access () {
-        sm.wait()
-    }
-    
-    public func release () {
-        sm.signal()
-    }
-    
     public func work (_ operation: ((inout T) -> Void)) {
         defer {
-            self.release()
+            sm.signal()
         }
         
-        self.access()
+        sm.wait()
         operation(&value)
     }
     
     public func get () -> T {
         defer {
-            self.release()
+            sm.signal()
         }
-        self.access()
+        sm.wait()
         let v = value
         return v
     }
     public func set (_ newValue: T) {
-        defer {
-            self.release()
+        self.work { (oValue) in
+            oValue = newValue
         }
-        self.access()
-        value = newValue
     }
 }
 public class ISemaphore {
