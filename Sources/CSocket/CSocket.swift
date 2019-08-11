@@ -145,6 +145,12 @@ open class CSocket: CustomStringConvertible {
         self.port = port
     }
     
+    public init (_ socket: CSocket) {
+        self.address = socket.address
+        self.port = socket.port
+        self.fd.set(socket.fd.get())
+    }
+    
     ///Returns the number of bytes available to be read
     public func availableData () -> Int {
         guard let socketfd = fd.get() else {
