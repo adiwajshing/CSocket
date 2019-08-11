@@ -40,6 +40,7 @@ open class CSocket: CustomStringConvertible {
     public enum Error: Swift.Error {
         case failedToObtainIPAddress
         case alreadyConnected
+        
         case error (Int32, String)
         
         init (_ err: Int32) {
@@ -67,6 +68,9 @@ open class CSocket: CustomStringConvertible {
     public static var sendIntervalMS = 20
     ///the interval between each c recv calls
     public static var readIntervalMS = 50
+    
+    ///the bytes used to echo test the connection
+    public static var echoTestBytes = Data([250, 251, 252, 253])
     
     ///the host at which a listener is started
     public static let defaultHost = "::/0"

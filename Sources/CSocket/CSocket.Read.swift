@@ -109,6 +109,7 @@ extension CSocket {
         }
         
         if readTimeout > 0.0 && Date().timeIntervalSince(readStartDate) > readTimeout {  // if there was a timeout & the process has timed out
+            self.close()
             self.readEnded(sync: sync, error: CSocket.Error.timedOutError())
             return
         }
@@ -167,7 +168,9 @@ extension CSocket {
             tmpData.removeAll()
             
             readSM.signal()
+            
             delegate?.readEnded(socket: self, data: data, error: error)
+            
         }
         
     }

@@ -19,7 +19,6 @@ public protocol CSocketAsyncOperationsDelegate {
     ///the callback event for when the socket read attempt ends
     func readEnded (socket: CSocket, data: Data, error: CSocket.Error?)
     
-    
     ///the callback event for when the socket has data available to read
     func dataDidBecomeAvailable (socket: CSocket, bytes: Int)
     

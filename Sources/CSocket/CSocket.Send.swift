@@ -54,6 +54,7 @@ extension CSocket {
     private func sendUpdate (sync: Bool) {
         
         if sendTimeout > 0.0 && Date().timeIntervalSince(sendStartDate) > sendTimeout { // if there was a timeout & the process has timed out
+            self.close()
             self.sendEnded(sync: sync, error: CSocket.Error.timedOutError())
         } else if let socketfd = fd.get() {
             
