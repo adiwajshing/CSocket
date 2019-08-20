@@ -9,12 +9,12 @@ import Foundation
 
 extension CSocket {
     
-    public func echoTestAsync () {
+    open func echoTestAsync () {
         sendAsync(data: &CSocket.echoTestBytes)
         readAsync(expectedLength: CSocket.echoTestBytes.count)
     }
     
-    public func echoTestSync (timeout: Double) throws {
+    open func echoTestSync (timeout: Double) throws {
         sendAsync(data: &CSocket.echoTestBytes)
         
         readSM.wait()

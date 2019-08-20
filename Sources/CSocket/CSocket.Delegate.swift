@@ -8,7 +8,7 @@
 import Foundation
 
 ///The protocol for all async operations on CSocket
-public protocol CSocketAsyncOperationsDelegate {
+public protocol CSocketAsyncOperationsDelegate: class {
     
     ///the callback event for when the socket connect attempt ends
     func connectEnded (socket: CSocket, error: CSocket.Error?)

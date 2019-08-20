@@ -60,7 +60,7 @@ open class CSocket: CustomStringConvertible {
     }
     
     ///the dispatch queue which takes takes care of all async operations of all CSockets
-    public static var updateQueue = DispatchQueue(label: "c_socket_queue", qos: .default, attributes: [.concurrent], autoreleaseFrequency: .inherit, target: nil)
+    public static var updateQueue = DispatchQueue(label: "c_socket_queue", qos: .userInitiated, attributes: [.concurrent], autoreleaseFrequency: .inherit, target: nil)
     
     ///the interval between checks for whether the socket has connected
     public static var connectCheckIntervalMS = 100
@@ -82,11 +82,11 @@ open class CSocket: CustomStringConvertible {
     public let port: Int32
     
     ///returns whether the socket is connected; whether the socketfd is set or not
-    public var isConnected: Bool {
+    open var isConnected: Bool {
         return fd.get() != nil
     }
     
-    public var description: String {
+    open var description: String {
         return "\(address):\(port) \( fd.get()?.description ?? "" )"
     }
     
@@ -100,7 +100,7 @@ open class CSocket: CustomStringConvertible {
     public var readBytesThreshhold = 0
     
     ///the delegate which is called for all async operations
-    public var delegate: CSocketAsyncOperationsDelegate?
+    public weak var delegate: CSocketAsyncOperationsDelegate?
     
     ///the file descriptor for the socket; C uses these integers to reference connections
     ///It is an AtomicValue to ensure thread safety

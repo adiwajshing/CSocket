@@ -18,7 +18,7 @@ extension CSocket {
 
     ///open the socket up for listening
     /// - Parameter maxBacklog: the maximum number of clients the socket will keep waiting
-    public func listen (maxBacklog: Int32) throws {
+    open func listen (maxBacklog: Int32) throws {
         
         if isConnected {
             throw CSocket.Error.alreadyConnected
@@ -70,7 +70,7 @@ extension CSocket {
     
     ///begins accepting clients in a non-block DispatchSourceTimer loop
     /// - Parameter intervalMS: the interval between each accept
-    public func beginAcceptingLoop (intervalMS: Int = 100) {
+    open func beginAcceptingLoop (intervalMS: Int = 100) {
         
         //makes a timer source
         let timer = DispatchSource.makeTimerSource(flags: [], queue: CSocket.updateQueue)
@@ -92,7 +92,7 @@ extension CSocket {
     }
     
     ///Returns a connection if one was waiting, otherwise returns nil
-    public func acceptAsync () throws -> CSocket? {
+    open func acceptAsync () throws -> CSocket? {
         
         guard let socketfd = fd.get() else {
             throw CSocket.Error.socketNotOpenError() //throw an exception if socket is not open

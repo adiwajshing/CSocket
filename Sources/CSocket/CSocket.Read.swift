@@ -13,7 +13,7 @@ extension CSocket {
     ///see 'CSocket.readBytesThreshhold' to tune the minimum data you need for the callback to be triggered
     /// - Parameter useDispatchSourceRead: Whether to use a DispatchSourceTimer or use the DispatchSourceRead (note: in my experience, DispatchSourceRead can be buggy on Linux)
     /// - Parameter intervalMS: Interval in MS between which it will check for data available, only valid for DispatchSourceTimer
-    public func notifyOnDataAvailable (useDispatchSourceRead: Bool, intervalMS: Int = 100) throws {
+    open func notifyOnDataAvailable (useDispatchSourceRead: Bool, intervalMS: Int = 100) throws {
         
         guard let socketfd = fd.get() else { // if the socket is not open
             throw CSocket.Error.socketNotOpenError() // throw error
@@ -61,7 +61,7 @@ extension CSocket {
     ///read data synchronously.
     ///see CSocket.readTimeout to set a timeout
     /// - Parameter expectedLength: the number of bytes that are expected from the other side
-    public func readSync (expectedLength length: Int) throws -> Data {
+    open func readSync (expectedLength length: Int) throws -> Data {
         self.beginRead(length: length, sync: true)
         
         defer {
@@ -77,7 +77,7 @@ extension CSocket {
         return data
     }
 
-    public func readAsync (expectedLength length: Int) {
+    open func readAsync (expectedLength length: Int) {
         
         CSocket.updateQueue.async {
             self.beginRead(length: length, sync: false)

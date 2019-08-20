@@ -16,7 +16,7 @@ extension CSocket {
     
     ///send data synchronously.
     ///see CSocket.sendTimeout to set a timeout
-    public func sendSync (data: inout Data) throws {
+    open func sendSync (data: inout Data) throws {
         beginSend(data: &data, sync: true) // send the data
         
         defer {
@@ -30,7 +30,7 @@ extension CSocket {
     
     ///send data asynchronously; calls the sendEnded (socket:, error:) when done.
     ///see CSocket.sendTimeout to set a timeout
-    public func sendAsync (data: inout Data) {
+    open func sendAsync (data: inout Data) {
         
         var d = data
         CSocket.updateQueue.async {

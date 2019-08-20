@@ -8,7 +8,7 @@
 import Foundation
 
 ///Thread Safe Object
-public class AtomicValue <T> {
+open class AtomicValue <T> {
     
     private var value: T
     private let sm = DispatchSemaphore(value: 1)

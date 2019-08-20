@@ -15,7 +15,7 @@ import Foundation
 extension CSocket {
     
     ///Connect to a listener synchronously
-    public func connectSync () throws {
+    open func connectSync () throws {
         beginConnect(sync: true)
         
         defer {
@@ -28,7 +28,7 @@ extension CSocket {
     }
     
     ///Connect to a listener asynchronously; calls connectEnded(socket:, error:) of the delegate
-    public func connectAsync () {
+    open func connectAsync () {
         CSocket.updateQueue.async {
             self.beginConnect(sync: false)
         }
@@ -158,7 +158,7 @@ extension CSocket {
     }
     
     ///close the socket connection
-    public func close () {
+    open func close () {
         
         guard let socketfd = fd.get() else {
             return
