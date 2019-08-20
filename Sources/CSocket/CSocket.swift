@@ -166,6 +166,10 @@ open class CSocket: CustomStringConvertible {
         return Int(count)
     }
     
+    public func cancelLoop () {
+        dispatchSource?.cancel()
+    }
+    
     ///Returns the IP Address of a domain along with its INETProtocol (ipv4 or ipv6)
     public static func getHostIP(_ host: String, prot: inout CSocket.INETProtocol) throws -> String {
         

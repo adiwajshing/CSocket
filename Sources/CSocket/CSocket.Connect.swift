@@ -164,9 +164,6 @@ extension CSocket {
             return
         }
         
-        
-        self.dispatchSource?.cancel()
-        
         #if os(Linux)
         Glibc.close(socketfd)
         #else
@@ -174,7 +171,6 @@ extension CSocket {
         #endif
         
         self.fd.set(nil)
-
     }
 
     
