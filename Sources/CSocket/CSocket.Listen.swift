@@ -76,7 +76,7 @@ extension CSocket {
         let timer = DispatchSource.makeTimerSource(flags: [], queue: CSocket.updateQueue)
         
         //set some properties & start it
-        timer.schedule(deadline: .now(), repeating: .milliseconds(intervalMS), leeway: .milliseconds(30))
+        timer.schedule(deadline: .now(), repeating: .milliseconds(intervalMS), leeway: .milliseconds(10))
         timer.setEventHandler(handler: acceptLoop)
         timer.resume()
         

@@ -29,7 +29,7 @@ extension CSocket {
         } else {
             let timer = DispatchSource.makeTimerSource(flags: [], queue: CSocket.updateQueue)
             
-            timer.schedule(deadline: .now(), repeating: .milliseconds(intervalMS), leeway: .milliseconds(30))
+            timer.schedule(deadline: .now(), repeating: .milliseconds(intervalMS), leeway: .milliseconds(20))
             timer.setEventHandler(handler: readLoop)
             timer.resume()
             
