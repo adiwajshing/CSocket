@@ -6,57 +6,27 @@
 //
 
 import XCTest
+import Promises
 @testable import CSocket
 
-class ConnectingTests: XCTestCase, CSocketAsyncOperationsDelegate {
+class ConnectingTests: XCTestCase {
 
-    var hasConnected = false
-
-    func testConnectAsync () {
-
-        let socket: CSocket
-        do {
-            socket = try CSocket(host: "3.92.216.207", port: 8081)
-        } catch {
-            XCTFail("error in making socket: \(error)")
-            return
-        }
-        
-        socket.connectTimeout = 5.0
-        socket.delegate = self
-        socket.connectAsync()
-        
-        while !hasConnected {
-            usleep(10 * 1000)
-        }
-        
-        socket.close()
-    }
-    func connectEnded(socket: CSocket, error: CSocket.Error?) {
-        hasConnected = true
-        XCTAssertTrue(socket.isConnected, "socket connect failed, error: \(error!)")
-    }
+    var clients = [CSocket]()
     
-    func testConnectSync () {
-        
-        do {
-            let socket = try CSocket(host: "3.92.216.207", port: 8081)
-            socket.connectTimeout = 5.0
-            
-            try socket.connectSync()
-            socket.close()
-        } catch {
-            XCTFail("got error: \(error)")
+    func testConnect () throws {
+        clients = try (0..<20).map { _ in try CSocket(host: "www.google.com", port: 80) }
+        let promises = clients.map { $0.connect(timeout: .seconds(5))  }
+        for p in promises {
+             try await( p )
         }
-        
+        clients.removeAll()
     }
-    
+
     func testConnectFail () {
         do {
             let socket = try CSocket(host: "3.92.216.27", port: 8081)
-            socket.connectTimeout = 2.0
             
-            try socket.connectSync()
+            try await(socket.connect(timeout: .seconds(2)))
             XCTFail("should have failed")
         } catch {
             print("got error: \(error)")
@@ -64,8 +34,7 @@ class ConnectingTests: XCTestCase, CSocketAsyncOperationsDelegate {
     }
     
     static var allTests = [
-        ("testConnectSync", testConnectSync),
-        ("testConnectAsync", testConnectAsync),
+        ("testConnect", testConnect),
         ("testConnectFail", testConnectFail)
     ]
 

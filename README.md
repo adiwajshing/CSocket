@@ -1,7 +1,8 @@
 # CSocket
-## A very light, fully equiped, cross-platform & thread-safe pure swift TCP socket.
+## A very light, cross-platform, fully asynchronous, event-driven & thread-safe pure swift TCP socket.
 
-It is written using the IPV6 protocol (but it handles IPV4, don't worry) & non-blocking mode. CSocket can readily handle synchronous & asynchronous requests. The library is also very light, so don't worry about bulking up your project with this!
+The library is written entirely in the IPV6 protocol (but it handles IPV4, don't worry) & uses non-blocking C sockets.
+The library is also very light, so don't worry about bulking up your project with this!
 
 ## Setup
 
@@ -12,79 +13,96 @@ Use Swift Package Manager, then just add the following line in your dependencies
 
 dependencies: [
     /* bla bla other dependencies */
-    .package(url: "https://github.com/adiwajshing/CSocket.git", from: "1.0.0"),
+    .package(url: "https://github.com/adiwajshing/CSocket.git", from: "2.0.0"), // (Add this line)
     /* more dependencies */
+],
+targets: [
+    .target(
+        name: "MySPMProject",
+        dependencies: ["CSocket", "AnotherDependency", "MoreDependency"] // And add it as a dependency
+    )
+    /* more targets */
 ]
-
-```
-
-And then add it to your target's dependencies like this:
-
-```swift
-
-.target(
-    name: "MySPMProject",
-    dependencies: ["CSocket", "AnotherDependency"]
-)
 
 ```
 
 ### Option B:
 If you're not using SPM, you can either compile a framework or copy and paste all the code into your project (it's not a lot of files), but you won't get updates with it and maintainance is a pain.
 
+## Before you start
+The library is completely asynchronous and is uses Google's Promises to make asynchronous operations really simple to handle. The library uses DispatchSourceRead and DispatchSourceWrite to notify when data is available to read, an incoming connection is present, or data is available to write etc. DispatchSourceTimer is used to manage timeouts.
 
 ## Usage
 
 ### Creating an Instance
 
-When you want to setup a listener:
+When you want to setup a listener that will accept incoming connections:
 ```swift
-let socket = CSocket(port: 8888) //the port you want to listen on
-try socket.listen(maxBacklog: 128) // to start listening for incoming connections on '::/0' (IPV6 version of 0.0.0.0). Basically listens for connections from everywhere
+let socket = CSocket(port: 8888) //the port you want to listen on, will setup the connection on '::/0' (IPV6 version of 0.0.0.0). Basically listens for connections from everywhere
+try socket.listen(maxBacklog: 128) // to start listening for incoming connections
 ```
 
 When you want to use the socket to connect to a listener:
 ```swift
-let socket = try CSocket(host: "www.google.com", port: 80) // the address is automatically looked up
+let socket = try CSocket(host: "www.google.com", port: 80) // the address is automatically looked up via the system DNS
 print(socket.address) //looked up address (will not return "www.google.com")
+
+// or if you don't want the address to be parsed by the DNS
+let socket = CSocket(address: "localhost", port: 8888)
 ```
 
-### Calling Sync Operations
+### Calling Operations
 
 Accepting Connections:
 ```swift
 
-while socket.isConnected {
-if let socket = try socket.acceptAsync() {
-print("yay \(socket) connected to this listener")
-}
-usleep(100 * 1000) //let the CPU rest for 100ms
+let socket = CSocket(port: 8888) //the port you want to listen on
+try socket.listen(maxBacklog: 128) // start listening for incoming connections
+try socket.beginAcceptingLoop { result in
+    switch result {
+    case .success(let client):
+        print("connected: \(client.description)")
+        /* Read from client or send some data etc. */
+        break
+    case .failure(let error):
+        print("error in accepting: \(error)")
+        socket.close() // close the socket because of the error :/
+        break
+    }
 }
 
 ```
 
 Connecting:
 ```swift
-socket.connectTimeout = 5.0 //set the timeout, set to -1 for infinite timeout
-try socket.connectSync()
+let socket = CSocket(address: "localhost", port: 8888)
+_ = socket.connect(timeout: .seconds(5))
+.then { print("yay connected") }
+.catch { error in print("oh no there was an error in connecting: \(error)") }
 ```
 
-Sending:
+Sending data:
 ```swift
 let str = "my name jeff"
-var data = Data(str.utf8) //get the utf8 data from the string
+let data = Data(str.utf8) //get the utf8 data from the string
 
-socket.sendTimeout = 5.0 //set the timeout, set to -1 for infinite timeout
-try socket.sendSync(&data)
+_ = socket.send(data: data, timeout: .seconds(5))
+.then { print("yay data sent") }
+.then { /* do some other work */ }
+.then { /* maybe read from the socket */ }
+.catch { error in print("oh no there was an error in sending data: \(error)") }
 ```
 
-Reading:
+Reading data:
 ```swift
-socket.readTimeout = 5.0 //set the timeout, set to -1 for infinite timeout
-let data = try socket.readSync(expectedLength: 12) //(12 is the length of "my name jeff")
 
-let str = String(data: data, encoding: .utf8)
-print(str)
+_ = socket.read(expectedCount: 12, timeout: .never) //(12 is the length of "my name jeff")
+.then { data in
+    let str = String(data: data, encoding: .utf8)
+    print("got data: \(str)")
+}
+.catch { error in print("oh no there was an error in reading data: \(error)") }
+
 ```
 
 Closing:
@@ -92,117 +110,7 @@ Closing:
 ```swift
 socket.close()
 ```
-
-### Calling Async Operations
-
-All asynchrous operations are handled via GCD.
-
-First set up a delegate, derive your class from 'CSocketAsyncOperationsDelegate':
-
-```swift
-
-class SampleClass: CSocketAsyncOperationsDelegate {
-    
-    let socket: CSocket
-    
-    init () throws {
-        socket = try CSocket(host: "127.0.0.1", port: 8888)
-        socket.delegate = self //set the delegate to self
-    }
-}
-
-```
-
-Accepting Connections:
-```swift
-
-extension SampleClass {
-
-    func listenAndAcceptClientsFromMySocket () {
-        try! socket.listen(maxBacklog: 1024)
-        socket.beginAcceptingLoop(intervalMS: 50) // the interval between which it will check for an incoming client, by default it is 100ms
-    }
-
-    // the callback event for when the listener accepts an incoming client
-    func didAcceptClient (socket: CSocket) {
-        print("yay, \(socket) connected to us")
-        var data = Data("new connection who dis".utf8)
-        socket.sendAsync(&data) //send a greeting
-    }
-}
-
-```
-
-Connecting:
-```swift
-extension SampleClass {
-
-    func connectMySocket () {
-        socket.connectTimeout = 4.0 // same timeout still applies
-        socket.connectAsync()
-    }
-    
-    // the callback event for when the socket connect attempt ends
-    func connectEnded (socket: CSocket, error: CSocket.Error?) {
-        if socket.isConnected {
-            print("yay connected")
-            
-            /*
-                start reading or send some data here
-            */
-            
-        } else {
-            print("connect failed with error: \(error!)")
-        }
-    }
-}
-```
-
-Sending:
-```swift
-extension SampleClass {
-
-    func sendSomeDataFromMySocket () {
-        let str = "hello how are you"
-        var data = Data(str.utf8) //get the utf8 data from the string
-    
-        socket.sendTimeout = 5.0 //set the timeout, set to -1 for infinite timeout
-        socket.sendAsync(&data)
-    }
-
-    // the callback event for when the socket send attempt ends
-    func sendEnded (socket: CSocket, error: CSocket.Error?) {
-        if let error = error {
-            print("send failed with error: \(error)")
-        } else {
-            print("yay, send success")
-        }
-    }
-}
-```
-
-Reading:
-```swift
-extension SampleClass {
-
-    func readDataSentToMySocket () {
-        socket.readAsync(expectedLength: 128)
-    }
-
-    // the callback event for when the socket read attempt ends
-    func readEnded (socket: CSocket, data: Data, error: CSocket.Error?) {
-        if let error = error {
-            print ("read failed with error: \(error)")
-        } else {
-            /*
-                do something with the data recieved here
-            */
-        }
-    }
-}
-```
 Making a read loop:
-You can make a loop either using a 'DispatchSourceTimer' or a 'DispatchSourceRead'.
 
 ```swift
 extension SampleClass {
@@ -230,47 +138,22 @@ extension SampleClass {
     }
 }
 ```
-
-
-#### Note: you only need a delegate for async operations, sync operations work fine without an async delegate. When a sync operation is called, its async callback will not be called. For eg.
+Working synchronously with CSocket:
 
 ```swift
-extension SampleClass {
+import Promises // include the promises library
+// call the await() function on any CSocket function to wait for it to complete synchronously
 
-    func readDataSentToMySocketSync () {
-        let data = try? socket.readSync(expectedLength: 128)
-        /* 
-            do something with data here
-        */
-    }
+try await ( socket.connect(timeout: .seconds(5)) ) // wait for the socket connection to complete
 
-    func readEnded (socket: CSocket, data: Data, error: CSocket.Error?) {
-        // will not be called
-    }
-}
+try await ( socket.send(data: data, timeout: .seconds(5)) ) // wait for the socket to send all the data
+
+let data = try await ( socket.read(expectedCount: count, timeout: .seconds(5)) ) // wait for the socket read to complete
+print("got data from read: \(data)")
 ```
 
 ## The properties
     
-### Static properties with the default values. 
-You don't really need to change any of the static properties unless you really want to fine tune.
-
-```swift
-
-//the dispatch queue which takes takes care of all async operations of all CSockets. Do not change this unless really required
-public static var updateQueue = DispatchQueue(label: "c_socket_queue", qos: .default, attributes: [.concurrent], autoreleaseFrequency: .inherit, target: nil)
-
-//the interval between checks for whether the socket has connected
-public static var connectCheckIntervalMS = 100
-
-//the interval between c send calls
-public static var sendIntervalMS = 20
-
-//the interval between each c recv calls
-public static var readIntervalMS = 50 
-
-```
-
 ### Local properties with the default values
 
 ```swift
@@ -278,20 +161,8 @@ public static var readIntervalMS = 50
 //returns whether the socket is connected; just checks whether the socketfd is set or not
 //to account for unexpected breaks in the connection, you'll have to write your own testConnection code
 public var isConnected: Bool { get; }
-
+//just prints 'address:port (socket file descriptor)'
 public var description: String { get; }
-
-//max timeout for connecting
-public var connectTimeout = 5.0
-
-//max timeout for sending a piece of data
-public var sendTimeout = 5.0
-
-//max timeout for reading some data
-public var readTimeout = 5.0
-
-// the minimum number of bytes required for the dataDidBecomeAvailable (socket:, bytes:) callback to be called. Setting it to 0 essentially makes an update loop when using DispatchSourceTimer for the read loop, which can also be useful 
-public var readBytesThreshhold = 0
 
 ```
 
@@ -306,19 +177,17 @@ However, I would recommend setting up the timeouts when creating the sockets as 
 
 CSocket has tests written for it, they're not very extensive though, but they do test concurrency & thread-safety quite well.
 
-There is also a load test written -- 'CommunicationTests.swift' -- a client sends to numbers and the server returns the product.
-This test also serves as a good example for how to use CSocket.
-My MacBook Pro took only 40% CPU and about 25s to run a server and 1000 simultaneous clients with 2 async requests each -- which I believe is pretty good.
+There is also a load test written -- 'CommunicationTests.swift' -- a client sends two numbers and the server returns the product of the numbers. This test also serves as a good example for how to use CSocket.
+A MacBook Pro takes about 500% CPU and about 9s to run a server and 5000 simultaneous clients with 10 simple requests each.
 
 ## Conclusion
 
 I originally took inspiration from BlueSocket & ytcpsocket.c because they just wouldn't cut it for me.
-ytcpsocket.c was written in C which made Linux use  difficult, whereas BlueSocket just seemed too bulky.
+ytcpsocket.c was written in C which made Linux use a pain, whereas BlueSocket just seemed too bulky.
 
-This is a library I wrote to use personally, but I believe a light socket library this functional can save a lot of developers a ton of time & headache.
-The library is designed with server use in mind and hence, is made as light and efficient as possible. CSocket is very efficient in both sync & async operations. I've tried to balance CPU usage & speed as well as I could -- the checking intervals can be used to fine tune that further.
+This is a library I wrote to use personally, but I believe a light, event-driven socket library can save developers a ton of time. The library is designed with server use in mind and hence, is made as light and efficient as possible.
 
-Moreover, the code is fully documented and I've tried to explain everything I've done in a way even someone just starting with sockets can understand.
+Moreover, the code is fully documented and I've tried to explain everything I've done in a way even someone just beginning with sockets can understand.
 
 Super open to criticism & possible improvements,
 Adhiraj Singh

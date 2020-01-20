@@ -16,13 +16,11 @@ import Foundation
 
 extension CSocket {
 
-    ///open the socket up for listening
+    ///opens the socket up for listening
     /// - Parameter maxBacklog: the maximum number of clients the socket will keep waiting
     open func listen (maxBacklog: Int32) throws {
         
-        if isConnected {
-            throw CSocket.Error.alreadyConnected
-        }
+        if isConnected { throw CSocket.Error.alreadyConnected }
         
         //allocate an fd
         let socketfd = socket(CSocket.inetProtocol, sockStreamType, 0)
@@ -47,9 +45,8 @@ extension CSocket {
         
         var r = bind(socketfd, &addr, socklen_t(MemoryLayout.size(ofValue: sa))) // bind to fd
         
-        if r < 0 {
-            throw CSocket.Error.current() //throw error if failed
-        }
+        //throw error if failed
+        if r < 0 { throw CSocket.Error.current() }
         
         /* for most C socket functions you have to explicitly mention the library,
          i.e. Glibc on Linux & Darwin on MacOS */
@@ -60,43 +57,18 @@ extension CSocket {
         r = Darwin.listen(socketfd, maxBacklog)
         #endif
         
-        if r < 0 {
-            throw CSocket.Error.current() //throw error if failed
-        }
+        //throw error if failed
+        if r < 0 { throw CSocket.Error.current() }
         
-        //If all went well, set our socketfd to self.fd. Listening done successfully!
-        fd.set(socketfd)
+        //If all went well, set our socketfd to self.fd. Listening started successfully!
+        fd.syncPointee = socketfd
     }
     
-    ///begins accepting clients in a non-block DispatchSourceTimer loop
-    /// - Parameter intervalMS: the interval between each accept
-    open func beginAcceptingLoop (intervalMS: Int = 100) {
+    ///accepts an incoming connection if one is waiting, otherwise returns nil
+    open func accept () throws -> CSocket? {
         
-        //makes a timer source
-        let timer = DispatchSource.makeTimerSource(flags: [], queue: CSocket.updateQueue)
-        
-        //set some properties & start it
-        timer.schedule(deadline: .now(), repeating: .milliseconds(intervalMS), leeway: .milliseconds(10))
-        timer.setEventHandler(handler: acceptLoop)
-        timer.resume()
-        
-        self.dispatchSource = timer
-    }
-    private func acceptLoop () {
-        if let client = try? acceptAsync() {
-            self.acceptedClient(client: client)
-        }
-    }
-    func acceptedClient (client: CSocket) {
-        delegate?.didAcceptClient(socket: client)
-    }
-    
-    ///Returns a connection if one was waiting, otherwise returns nil
-    open func acceptAsync () throws -> CSocket? {
-        
-        guard let socketfd = fd.get() else {
-            throw CSocket.Error.socketNotOpenError() //throw an exception if socket is not open
-        }
+         //throw an exception if socket is not open
+        guard let socketfd = fd.syncPointee else { throw CSocket.Error.socketNotOpen }
         
         var cli_addr = sockaddr.init() //struct which stores information about the client
         var clilen = socklen_t(MemoryLayout.size(ofValue: cli_addr)) //size of structure mentioned above
@@ -111,9 +83,8 @@ extension CSocket {
         
         //if there was an incoming connection that was accepted successfully it would be set to a file descriptor, which would be > 0
         guard newsockfd > 0 else {
-            if errno == EWOULDBLOCK { //if there was no incoming connection
-                return nil
-            }
+            //if there was no incoming connection
+            if errno == EWOULDBLOCK { return nil }
             throw CSocket.Error.current() //if there was an error in connecting
         }
         
@@ -132,9 +103,25 @@ extension CSocket {
         
         
         let socket = CSocket(address: clientaddr, port: clientport, addressType: .ipv6)
-        socket.fd.set(newsockfd) //make CSocket wrap around the new fd
+        socket.fd.syncPointee = newsockfd //make CSocket wrap around the new fd
         
         return socket
     }
     
+    ///begins accepting clients using events from DispatchSourceRead
+    /// - Parameter didAcceptClient: the callback when a connection is accepted
+    open func beginAcceptingLoop (didAcceptClient: @escaping (Result<CSocket, Swift.Error>) -> Void ) {
+        
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd.syncPointee!, queue: queue)
+        source.setEventHandler {
+            do {
+                if let client = try self.accept() { didAcceptClient(.success(client)) }
+            } catch {
+                didAcceptClient(.failure(error))
+            }
+        }
+        source.resume()
+        
+        self.dispatchSource = source
+    }
 }
